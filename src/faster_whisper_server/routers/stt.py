@@ -39,6 +39,7 @@ from faster_whisper_server.config import (
 from faster_whisper_server.dependencies import ConfigDependency, ModelManagerDependency, get_config
 from faster_whisper_server.text_utils import segments_to_srt, segments_to_text, segments_to_vtt
 from faster_whisper_server.transcriber import audio_transcriber
+from faster_whisper_server.openai_tasks import Local_OpenAIAPI
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -312,3 +313,61 @@ async def transcribe_stream(
     if ws.client_state != WebSocketState.DISCONNECTED:
         logger.info("Closing the connection.")
         await ws.close()
+
+def handle_some_text(some_text: str) -> str:
+    """Exists because some callers may not be able override the default("whisper-1") model name.
+
+    For example, https://github.com/open-webui/open-webui/issues/2248#issuecomment-2162997623.
+    """
+    return handle_some_text
+
+
+TextToComplete = Annotated[
+    str,
+    AfterValidator(handle_some_text),
+    Field(
+        description="text to examine",
+        examples=[
+            "Systran",
+        ],
+    ),
+]
+
+@router.post(
+    "/v1/audio/completions/text",
+    response_model=str | CreateTranscriptionResponseJson | CreateTranscriptionResponseVerboseJson,
+)
+def complete_text(
+    config: ConfigDependency,
+    model_manager: ModelManagerDependency,
+    request: Request,
+    text_to_complete: TextToComplete,
+    model: Annotated[ModelName | None, Form()] = None,
+    language: Annotated[Language | None, Form()] = None,
+    prompt: Annotated[str | None, Form()] = None,
+    response_format: Annotated[ResponseFormat | None, Form()] = None,
+    temperature: Annotated[float, Form()] = 0.0,
+    timestamp_granularities: Annotated[
+        TimestampGranularities,
+        # WARN: `alias` doesn't actually work.
+        Form(alias="timestamp_granularities[]"),
+    ] = ["segment"],
+    stream: Annotated[bool, Form()] = False,
+    hotwords: Annotated[str | None, Form()] = None,
+    vad_filter: Annotated[bool, Form()] = False,
+) -> Response | StreamingResponse:
+    if model is None:
+        model = config.whisper.model
+    if language is None:
+        language = config.default_language
+    if response_format is None:
+        response_format = config.default_response_format
+    timestamp_granularities = asyncio.run(get_timestamp_granularities(request))
+    if timestamp_granularities != DEFAULT_TIMESTAMP_GRANULARITIES and response_format != ResponseFormat.VERBOSE_JSON:
+        logger.warning(
+            "It only makes sense to provide `timestamp_granularities[]` when `response_format` is set to `verbose_json`. See https://platform.openai.com/docs/api-reference/audio/createTranscription#audio-createtranscription-timestamp_granularities."  # noqa: E501
+        )
+    local_openaiapi=Local_OpenAIAPI()
+    proofed=local_openaiapi.text_proofreading(text_to_complete)
+    return proofed
+

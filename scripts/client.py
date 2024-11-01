@@ -5,7 +5,8 @@ import threading
 import time
 
 import httpx
-import keyboard
+# import keyboard
+from pynput.keyboard import Controller, Key
 
 # NOTE: this is a very basic implementation. Not really meant for usage by others.
 # Included here in case someone wants to use it as a reference.
@@ -49,7 +50,8 @@ file = Path("test.wav")  # HACK: I had a hard time trying to use a temporary fil
 
 
 while True:
-    keyboard.wait(KEYBIND)
+    print('f')
+    keyboard = Controller()
     print("Recording started")
     process = subprocess.Popen(
         [*AUDIO_RECORD_CMD, "-y", str(file.name)],
@@ -58,7 +60,7 @@ while True:
         user=USER,
         env=dict(os.environ),
     )
-    keyboard.wait(KEYBIND)
+
     process.kill()
     stdout, stderr = process.communicate()
     if stdout or stderr:
@@ -77,6 +79,7 @@ while True:
         end = time.perf_counter()
         print(f"Transcription took {end - start} seconds")
         transcription = res.text
+        keyboard.type(transcription)
         print(transcription)
         subprocess.run([COPY_TO_CLIPBOARD_CMD], input=transcription.encode(), check=True)
     except httpx.ConnectError as e:
